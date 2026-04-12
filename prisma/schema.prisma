@@ -1,0 +1,85 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  username     String   @unique
+  password     String
+  role         Role     @default(PLAYER)
+  createdAt    DateTime @default(now())
+
+  gamesCreated Game[]
+  gamePlayers  GamePlayer[]
+  findings     Finding[]
+}
+
+model Game {
+  id          Int       @id @default(autoincrement())
+  name        String
+  description String?
+  active      Boolean   @default(true)
+  startAt     DateTime?
+  endAt       DateTime?
+  createdAt   DateTime  @default(now())
+
+  createdBy   Int
+  creator     User      @relation(fields: [createdBy], references: [id])
+
+  thiltapes   Thiltape[]
+  gamePlayers GamePlayer[]
+}
+
+model Thiltape {
+  id           Int      @id @default(autoincrement())
+  name         String
+  description  String?
+  image        String?
+  latitude     Float
+  longitude    Float
+  radiusMeters Float    @default(20)
+  createdAt    DateTime @default(now())
+
+  gameId  Int
+  game    Game          @relation(fields: [gameId], references: [id])
+
+  findings Finding[]
+}
+
+model Finding {
+  id             Int      @id @default(autoincrement())
+  photo          String?
+  foundLatitude  Float
+  foundLongitude Float
+  foundAt        DateTime @default(now())
+
+  playerId   Int
+  player     User         @relation(fields: [playerId], references: [id])
+
+  thiltapeId Int
+  thiltape   Thiltape     @relation(fields: [thiltapeId], references: [id])
+
+  @@unique([playerId, thiltapeId])
+}
+
+model GamePlayer {
+  id       Int      @id @default(autoincrement())
+  joinedAt DateTime @default(now())
+
+  gameId   Int
+  game     Game     @relation(fields: [gameId], references: [id])
+
+  playerId Int
+  player   User     @relation(fields: [playerId], references: [id])
+
+  @@unique([gameId, playerId])
+}
+
+enum Role {
+  ADMIN
+  PLAYER
+}
