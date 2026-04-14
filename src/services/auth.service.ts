@@ -1,33 +1,39 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { prisma } from "../../prisma/client";
+import databaseService from "../database.service";
+import { User } from "../entities/User.entity";
 
 export async function register(username: string, password: string) {
-  const existing = await prisma.user.findUnique({ where: { username } });
+  const userRepository = databaseService.getUserRepository();
+
+  const existing = await userRepository.findOneBy({ username });
 
   if (existing) throw new Error("Usuário já cadastrado.");
 
   const hashedPassword = await bcrypt.hash(password, 10);
 
-  const user = await prisma.user.create({
-    data: { username, password: hashedPassword },
-    select: { id: true, username: true, role: true, createdAt: true },
-  });
+  const user = new User();
+  user.username = username;
+  user.password = hashedPassword;
+
+  const savedUser = await userRepository.save(user);
 
   const token = jwt.sign(
-    { id: user.id, role: user.role },
+    { id: savedUser.id, role: savedUser.role },
     process.env.JWT_SECRET!,
     { expiresIn: "999d" },
   );
 
   return {
     token,
-    user: { id: user.id, name: user.username, role: user.role },
+    user: { id: savedUser.id, name: savedUser.username, role: savedUser.role },
   };
 }
 
 export async function login(username: string, password: string) {
-  const user = await prisma.user.findUnique({ where: { username } });
+  const userRepository = databaseService.getUserRepository();
+
+  const user = await userRepository.findOneBy({ username });
 
   if (!user) throw new Error("Credenciais inválidas.");
 
@@ -43,6 +49,6 @@ export async function login(username: string, password: string) {
 
   return {
     token,
-    user: { id: user.id, name: user.username, role: user.role },
+    user: { id: user.id, username: user.username, role: user.role },
   };
 }

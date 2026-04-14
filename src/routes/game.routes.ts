@@ -1,23 +1,30 @@
 import { Router, Response } from "express";
-import { authenticate, adminOnly, AuthRequest } from "../auth.middleware";
+import { authenticate, AuthRequest } from "../auth.middleware";
 import {
   createGame,
   listGames,
   getGame,
   joinGame,
-  toggleGame,
+  leaveGame,
+  startGame,
+  finishGame,
+  getNearbyThiltapes,
 } from "../services/game.service";
+import { registerFinding, listFindings } from "../services/finding.service";
+import { getLatFromPoint, getLngFromPoint } from "../services/thiltape.service";
 
 const router = Router();
 
 // Listar jogos (todos os autenticados)
-router.get("/", authenticate, async (req: AuthRequest, res: Response) => {
-  const games = await listGames();
+// GET /games?onlyActive=true
+router.get("/", authenticate(), async (req: AuthRequest, res: Response) => {
+  const onlyActive = req.query.onlyActive === "true";
+  const games = await listGames(onlyActive);
   res.json(games);
 });
 
 // Buscar jogo por ID
-router.get("/:id", authenticate, async (req: AuthRequest, res: Response) => {
+router.get("/:id", authenticate(), async (req: AuthRequest, res: Response) => {
   const game = await getGame(req.params.id);
   if (!game) {
     res.status(404).json({ error: "Jogo não encontrado." });
@@ -29,20 +36,40 @@ router.get("/:id", authenticate, async (req: AuthRequest, res: Response) => {
 // Criar jogo (admin)
 router.post(
   "/",
-  authenticate,
-  adminOnly,
+  authenticate("ADMIN"),
   async (req: AuthRequest, res: Response) => {
-    const { name, description, startAt, endAt } = req.body;
-    if (!name) {
-      res.status(400).json({ error: "name é obrigatório." });
+    const {
+      name,
+      description,
+      adminLocationLat,
+      adminLocationLng,
+      gameRadiusMeters,
+      maxThiltapesCount,
+      countdownMinutes,
+    } = req.body;
+
+    if (
+      !name ||
+      adminLocationLat === undefined ||
+      adminLocationLng === undefined ||
+      !maxThiltapesCount
+    ) {
+      res.status(400).json({
+        error:
+          "name, adminLocationLat, adminLocationLng, maxThiltapesCount são obrigatórios.",
+      });
       return;
     }
+
     try {
       const game = await createGame({
         name,
         description,
-        startAt,
-        endAt,
+        adminLocationLat,
+        adminLocationLng,
+        gameRadiusMeters,
+        maxThiltapesCount,
+        countdownMinutes,
         createdBy: req.user!.id,
       });
       res.status(201).json(game);
@@ -52,34 +79,157 @@ router.post(
   },
 );
 
-// Ativar/desativar jogo (admin)
-router.patch(
-  "/:id/active",
-  authenticate,
-  adminOnly,
+// Iniciar jogo (admin) — muda status de WAITING para ACTIVE
+router.post(
+  "/:id/start",
+  authenticate("ADMIN"),
   async (req: AuthRequest, res: Response) => {
-    const { active } = req.body;
-    if (typeof active !== "boolean") {
-      res.status(400).json({ error: "active deve ser boolean." });
-      return;
+    try {
+      const game = await startGame(req.params.id);
+      res.json(game);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
     }
-    const game = await toggleGame(req.params.id, active);
-    res.json(game);
   },
 );
 
-// Entrar em um jogo (player)
+// Encerrar jogo manualmente (admin) — sem vencedor
 router.post(
-  "/:id/join",
-  authenticate,
+  "/:id/finish",
+  authenticate("ADMIN"),
   async (req: AuthRequest, res: Response) => {
     try {
-      const gp = await joinGame(req.params.id, req.user!.id);
+      const game = await finishGame(req.params.id);
+      res.json(game);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  },
+);
+
+// Entrar em um jogo (com validação de raio)
+router.post(
+  "/:id/join",
+  authenticate(),
+  async (req: AuthRequest, res: Response) => {
+    const { playerLocationLat, playerLocationLng } = req.body;
+    try {
+      const gp = await joinGame(
+        req.params.id,
+        req.user!.id,
+        playerLocationLat,
+        playerLocationLng,
+      );
       res.status(201).json(gp);
     } catch (e: any) {
-      res
-        .status(400)
-        .json({ error: "Você já está neste jogo ou jogo não existe." });
+      res.status(400).json({ error: e.message });
+    }
+  },
+);
+
+// Sair de um jogo
+router.delete(
+  "/:id/leave",
+  authenticate(),
+  async (req: AuthRequest, res: Response) => {
+    try {
+      await leaveGame(req.params.id, req.user!.id);
+      res.json({ message: "Você saiu do jogo." });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  },
+);
+
+// Listar thiltapes próximos de um jogador
+router.get(
+  "/:id/nearby-thiltapes",
+  authenticate(),
+  async (req: AuthRequest, res: Response) => {
+    const { playerLocationLat, playerLocationLng } = req.query;
+
+    if (playerLocationLat === undefined || playerLocationLng === undefined) {
+      res.status(400).json({
+        error: "playerLocationLat e playerLocationLng são obrigatórios.",
+      });
+      return;
+    }
+
+    try {
+      const nearby = await getNearbyThiltapes(
+        req.params.id,
+        req.user!.id,
+        parseFloat(playerLocationLat as string),
+        parseFloat(playerLocationLng as string),
+      );
+      res.json(nearby);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  },
+);
+
+// Registrar que encontrou um thiltape em um jogo específico
+router.post(
+  "/:id/finding",
+  authenticate(),
+  async (req: AuthRequest, res: Response) => {
+    const { thiltapeId, photoBase64, playerLocationLat, playerLocationLng } =
+      req.body;
+
+    if (
+      !thiltapeId ||
+      !photoBase64 ||
+      playerLocationLat === undefined ||
+      playerLocationLng === undefined
+    ) {
+      res.status(400).json({
+        error:
+          "thiltapeId, photoBase64, playerLocationLat e playerLocationLng são obrigatórios.",
+      });
+      return;
+    }
+
+    try {
+      const result = await registerFinding({
+        gameId: req.params.id,
+        playerId: req.user!.id,
+        thiltapeId,
+        photoBase64,
+        playerLocationLat: parseFloat(playerLocationLat),
+        playerLocationLng: parseFloat(playerLocationLng),
+      });
+
+      res.status(201).json({
+        findingId: result.finding.id,
+        isVictory: result.isVictory,
+        finding: {
+          id: result.finding.id,
+          photoBase64: result.finding.photoBase64,
+          playerLocationLat: getLatFromPoint(result.finding.location),
+          playerLocationLng: getLngFromPoint(result.finding.location),
+          foundAt: result.finding.foundAt,
+        },
+        message: result.isVictory
+          ? "🎉 Parabéns! Você coletou todos os thiltapes e venceu o jogo!"
+          : "Thiltape coletado com sucesso!",
+      });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
+  },
+);
+
+// Listar findings do jogador em um jogo específico
+router.get(
+  "/:id/my-findings",
+  authenticate(),
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const findings = await listFindings(req.user!.id, req.params.id);
+      res.json(findings);
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
     }
   },
 );
