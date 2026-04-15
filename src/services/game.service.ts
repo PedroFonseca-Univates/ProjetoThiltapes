@@ -15,11 +15,20 @@ export async function createGame(data: {
   adminLocationLat: number;
   adminLocationLng: number;
   gameRadiusMeters?: number;
-  maxThiltapesCount: number;
+  thiltapesCount: number;
   countdownMinutes?: number;
   createdBy: string;
 }) {
   const gameRepository = databaseService.getGameRepository();
+  const thiltapeRepository = databaseService.getThiltapeRepository();
+
+  // Verificar se há thiltapes disponíveis no pool global
+  const availableThiltapesCount = await thiltapeRepository.count();
+  if (availableThiltapesCount === 0) {
+    throw new Error(
+      "Não há thiltapes disponíveis no pool global. Crie pelo menos um thiltape antes de criar um jogo.",
+    );
+  }
 
   const game = new Game();
   game.name = data.name;
@@ -27,10 +36,20 @@ export async function createGame(data: {
   game.location = createPoint(data.adminLocationLng, data.adminLocationLat);
   game.gameRadiusMeters = data.gameRadiusMeters || 1000;
   game.countdownMinutes = data.countdownMinutes || 60;
+  game.thiltapesCount = data.thiltapesCount;
   game.createdBy = data.createdBy;
   game.status = GameStatus.WAITING;
 
-  return gameRepository.save(game);
+  const savedGame = await gameRepository.save(game);
+  await generateThiltapesForGame(
+    savedGame.id,
+    data.adminLocationLat,
+    data.adminLocationLng,
+    savedGame.gameRadiusMeters,
+    savedGame.thiltapesCount,
+  );
+
+  return savedGame;
 }
 
 export async function listGames(onlyActive = false) {
@@ -50,7 +69,7 @@ export async function getGame(id: string) {
 
   return gameRepository.findOne({
     where: { id },
-    relations: ["createdBy", "winner", "gameThiltapes", "players"],
+    relations: ["createdByUser", "winner", "gameThiltapes", "players"],
   });
 }
 
@@ -74,10 +93,19 @@ export async function generateThiltapesForGame(
     throw new Error("Nenhum thiltape disponível no pool global.");
   }
 
-  // Select random thiltapes
-  const selectedThiltapes = allThiltapes
-    .sort(() => Math.random() - 0.5)
-    .slice(0, Math.min(count, allThiltapes.length));
+  const selectedThiltapes: typeof allThiltapes = [];
+  const shuffledThiltapes = [...allThiltapes].sort(() => Math.random() - 0.5);
+
+  if (count <= shuffledThiltapes.length) {
+    selectedThiltapes.push(...shuffledThiltapes.slice(0, count));
+  } else {
+    selectedThiltapes.push(...shuffledThiltapes);
+    while (selectedThiltapes.length < count) {
+      const randomThiltape =
+        allThiltapes[Math.floor(Math.random() * allThiltapes.length)];
+      selectedThiltapes.push(randomThiltape);
+    }
+  }
 
   // Create GameThiltape entries with random coordinates within radius
   const gameThiltapes: GameThiltape[] = [];
@@ -126,7 +154,7 @@ export async function startGame(id: string) {
       getLatFromPoint(game.location),
       getLngFromPoint(game.location),
       game.gameRadiusMeters,
-      1, // Placeholder; será usado maxThiltapesCount se passado
+      game.thiltapesCount,
     );
   }
 
@@ -256,26 +284,45 @@ export async function getNearbyThiltapes(
   const gameThiltapeRepository = databaseService.getRepository(GameThiltape);
   const findingRepository = databaseService.getFindingRepository();
 
-  // Get all game thiltapes
+  console.log("[getNearbyThiltapes] gameId:", gameId);
+  console.log("[getNearbyThiltapes] playerId:", playerId);
+  console.log("[getNearbyThiltapes] playerLocation:", {
+    lat: playerLat,
+    lng: playerLng,
+  });
+
+  // Get all game thiltapes for this specific game
   const gameThiltapes = await gameThiltapeRepository.find({
     where: { gameId },
     relations: ["thiltape"],
   });
 
-  // Get player's findings for this game
+  console.log(
+    "[getNearbyThiltapes] Found",
+    gameThiltapes.length,
+    "thiltapes in this game",
+  );
+
+  // Get player's findings ONLY for this specific game
   const playerFindings = await findingRepository.find({
     where: {
       playerId,
-      thiltape: {
-        gameThiltapes: {
-          gameId,
-        },
+      gameThiltape: {
+        gameId,
       },
     },
-    relations: ["thiltape"],
+    relations: ["gameThiltape"],
   });
 
-  const foundThiltapeIds = new Set(playerFindings.map((f) => f.thiltapeId));
+  console.log(
+    "[getNearbyThiltapes] Player already found",
+    playerFindings.length,
+    "thiltapes in this game",
+  );
+
+  const foundGameThiltapeIds = new Set(
+    playerFindings.map((f) => f.gameThiltapeId),
+  );
 
   // Calculate distances and add found status
   const nearbyWithDistance = gameThiltapes
@@ -293,10 +340,28 @@ export async function getNearbyThiltapes(
           lng: gtLng,
         },
         distanceMeters: haversineDistance(playerLat, playerLng, gtLat, gtLng),
-        isFound: foundThiltapeIds.has(gt.thiltape.id),
+        isFound: foundGameThiltapeIds.has(gt.id),
       };
     })
     .sort((a, b) => a.distanceMeters - b.distanceMeters);
+
+  console.log(
+    "[getNearbyThiltapes] Returning",
+    nearbyWithDistance.length,
+    "thiltapes sorted by distance",
+  );
+  if (nearbyWithDistance.length > 0) {
+    console.log(
+      "[getNearbyThiltapes] Closest thiltape distance:",
+      nearbyWithDistance[0].distanceMeters,
+      "meters",
+    );
+    console.log(
+      "[getNearbyThiltapes] Farthest thiltape distance:",
+      nearbyWithDistance[nearbyWithDistance.length - 1].distanceMeters,
+      "meters",
+    );
+  }
 
   return nearbyWithDistance;
 }
@@ -317,13 +382,11 @@ export async function checkVictory(
     findingRepository.count({
       where: {
         playerId,
-        thiltape: {
-          gameThiltapes: {
-            gameId,
-          },
+        gameThiltape: {
+          gameId,
         },
       },
-      relations: ["thiltape", "thiltape.gameThiltapes"],
+      relations: ["gameThiltape"],
     }),
   ]);
 

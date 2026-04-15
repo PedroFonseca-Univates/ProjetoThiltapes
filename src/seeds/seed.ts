@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { AppDataSource } from "../database";
-import { seedAdminUser } from "./admin.seeder";
+import { runUserSeed } from "./user.seeder";
 
 async function runSeeds() {
   try {
@@ -13,7 +13,7 @@ async function runSeeds() {
     console.log("[Seeder] Executando seeders...");
 
     // Executar seeds
-    await seedAdminUser();
+    await runUserSeed();
 
     console.log("[Seeder] Seeders executados com sucesso.");
   } catch (error) {

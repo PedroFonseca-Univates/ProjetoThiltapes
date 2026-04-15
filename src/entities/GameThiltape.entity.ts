@@ -12,7 +12,6 @@ import { Thiltape } from "./Thiltape.entity";
 import { Point } from "typeorm";
 
 @Entity("game_thiltapes")
-@Unique(["game", "thiltape"])
 @Index(["game"])
 @Index(["thiltape"])
 @Index(["location"], { spatial: true })

@@ -59,15 +59,16 @@ export async function registerFinding(data: {
       throw new Error("Você não está participando deste jogo.");
     }
 
-    // Verifica se já encontrou este thiltape
+    // Verifica se já encontrou este gameThiltape específico
     const existing = await findingRepository.findOne({
       where: {
         playerId: data.playerId,
-        thiltapeId: data.thiltapeId,
+        gameThiltapeId: gameThiltape.id,
       },
     });
 
-    if (existing) throw new Error("Você já encontrou este thiltape.");
+    if (existing)
+      throw new Error("Você já encontrou este thiltape neste jogo.");
 
     // Registra o finding
     const finding = new Finding();
@@ -77,30 +78,26 @@ export async function registerFinding(data: {
       data.playerLocationLat,
     );
     finding.playerId = data.playerId;
-    finding.thiltapeId = data.thiltapeId;
+    finding.gameThiltapeId = gameThiltape.id;
 
     const savedFinding = await findingRepository.save(finding);
 
     // Verifica vitória dentro da transação
-    const gameThiltapesCount = await gameThiltapeRepository.count({
-      where: { gameId: data.gameId },
-    });
+    // USA game.thiltapesCount para evitar race condition entre jogadores
+    const totalThiltapes = game.thiltapesCount;
 
-    const playerFindingsCount = await findingRepository.count({
-      where: {
-        playerId: data.playerId,
-        thiltape: {
-          gameThiltapes: {
-            gameId: data.gameId,
-          },
-        },
-      },
-      relations: ["thiltape", "thiltape.gameThiltapes"],
-    });
+    // USA QueryBuilder explícito para garantir que o filtro de gameId é aplicado corretamente.
+    // O findingRepository.count() com filtro via relations é não-confiável no TypeORM
+    // e pode contar findings de outros jogos do mesmo player, causando vitória prematura.
+    const playerFindingsCount = await manager
+      .createQueryBuilder(Finding, "finding")
+      .innerJoin("finding.gameThiltape", "gt")
+      .where("finding.playerId = :playerId", { playerId: data.playerId })
+      .andWhere("gt.gameId = :gameId", { gameId: data.gameId })
+      .getCount();
 
     let isVictory = false;
-    if (gameThiltapesCount > 0 && playerFindingsCount >= gameThiltapesCount) {
-      // Atualiza o jogo com o vencedor
+    if (totalThiltapes > 0 && playerFindingsCount >= totalThiltapes) {
       await gameRepository.update(
         { id: data.gameId },
         {
@@ -125,33 +122,19 @@ export async function listFindings(playerId: string, gameId?: string) {
 
   let findings = await findingRepository
     .createQueryBuilder("finding")
-    .leftJoinAndSelect("finding.thiltape", "thiltape")
+    .leftJoinAndSelect("finding.gameThiltape", "gameThiltape")
+    .leftJoinAndSelect("gameThiltape.thiltape", "thiltape")
     .where("finding.playerId = :playerId", { playerId });
 
   if (gameId) {
-    findings = findings.andWhere(
-      `finding.thiltapeId IN (
-        SELECT gt.thiltapeId FROM game_thiltapes gt WHERE gt.gameId = :gameId
-      )`,
-      { gameId },
-    );
+    findings = findings.andWhere("gameThiltape.gameId = :gameId", { gameId });
   }
 
-  const results = await findings
-    .select([
-      "finding.id",
-      "finding.photoBase64",
-      "finding.location",
-      "finding.foundAt",
-      "thiltape.id",
-      "thiltape.name",
-    ])
-    .orderBy("finding.foundAt", "DESC")
-    .getMany();
+  const results = await findings.orderBy("finding.foundAt", "DESC").getMany();
 
   return results.map((f) => ({
-    thiltapeId: f.thiltapeId,
-    thiltapeName: f.thiltape.name,
+    thiltapeId: f.gameThiltape.thiltapeId,
+    thiltapeName: f.gameThiltape.thiltape.name,
     photoBase64: f.photoBase64,
     playerLocationLat: getLatFromPoint(f.location),
     playerLocationLng: getLngFromPoint(f.location),

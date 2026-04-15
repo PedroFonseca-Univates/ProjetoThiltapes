@@ -5,17 +5,15 @@ import {
   CreateDateColumn,
   ManyToOne,
   JoinColumn,
-  Unique,
   Index,
 } from "typeorm";
 import { User } from "./User.entity";
-import { Thiltape } from "./Thiltape.entity";
+import { GameThiltape } from "./GameThiltape.entity";
 import { Point } from "typeorm";
 
 @Entity("findings")
-@Unique(["player", "thiltape"])
 @Index(["player"])
-@Index(["thiltape"])
+@Index(["gameThiltape"])
 @Index(["location"], { spatial: true })
 export class Finding {
   @PrimaryGeneratedColumn("uuid")
@@ -43,10 +41,10 @@ export class Finding {
   @Column({ type: "uuid" })
   playerId: string;
 
-  @ManyToOne(() => Thiltape, (thiltape) => thiltape.findings)
-  @JoinColumn({ name: "thiltapeId" })
-  thiltape: Thiltape;
+  @ManyToOne(() => GameThiltape)
+  @JoinColumn({ name: "gameThiltapeId" })
+  gameThiltape: GameThiltape;
 
   @Column({ type: "uuid" })
-  thiltapeId: string;
+  gameThiltapeId: string;
 }

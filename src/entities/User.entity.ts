@@ -4,7 +4,6 @@ import {
   Column,
   CreateDateColumn,
   OneToMany,
-  OneToOne,
 } from "typeorm";
 import { Game } from "./Game.entity";
 import { GamePlayer } from "./GamePlayer.entity";
@@ -33,11 +32,12 @@ export class User {
   createdAt: Date;
 
   // Relations
-  @OneToMany(() => Game, (game) => game.createdBy)
+  @OneToMany(() => Game, (game) => game.createdByUser)
   createdGames: Game[];
 
-  @OneToOne(() => Game, (game) => game.winner, { nullable: true })
-  wonGame: Game | null;
+  // OneToMany pois um usuário pode vencer múltiplos jogos
+  @OneToMany(() => Game, (game) => game.winner)
+  wonGames: Game[];
 
   @OneToMany(() => GamePlayer, (gamePlayer) => gamePlayer.player)
   gameParticipations: GamePlayer[];

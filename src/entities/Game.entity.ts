@@ -4,7 +4,6 @@ import {
   Column,
   CreateDateColumn,
   ManyToOne,
-  OneToOne,
   JoinColumn,
   OneToMany,
 } from "typeorm";
@@ -59,6 +58,9 @@ export class Game {
   @Column({ type: "integer", default: 60 })
   countdownMinutes: number;
 
+  @Column({ type: "integer" })
+  thiltapesCount: number;
+
   @CreateDateColumn()
   createdAt: Date;
 
@@ -70,7 +72,9 @@ export class Game {
   @Column({ type: "uuid", name: "createdBy" })
   createdBy: string;
 
-  @OneToOne(() => User, (user) => user.wonGame, { nullable: true })
+  // ManyToOne pois um usuário pode vencer múltiplos jogos
+  // (OneToOne criava UNIQUE em winnerId, impedindo o mesmo player de ganhar mais de um jogo)
+  @ManyToOne(() => User, (user) => user.wonGames, { nullable: true })
   @JoinColumn({ name: "winnerId" })
   winner: User | null;
 

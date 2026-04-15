@@ -44,7 +44,7 @@ router.post(
       adminLocationLat,
       adminLocationLng,
       gameRadiusMeters,
-      maxThiltapesCount,
+      thiltapesCount,
       countdownMinutes,
     } = req.body;
 
@@ -52,11 +52,18 @@ router.post(
       !name ||
       adminLocationLat === undefined ||
       adminLocationLng === undefined ||
-      !maxThiltapesCount
+      thiltapesCount === undefined
     ) {
       res.status(400).json({
         error:
-          "name, adminLocationLat, adminLocationLng, maxThiltapesCount são obrigatórios.",
+          "name, adminLocationLat, adminLocationLng, thiltapesCount são obrigatórios.",
+      });
+      return;
+    }
+
+    if (thiltapesCount < 1) {
+      res.status(400).json({
+        error: "thiltapesCount deve ser no mínimo 1.",
       });
       return;
     }
@@ -68,7 +75,7 @@ router.post(
         adminLocationLat,
         adminLocationLng,
         gameRadiusMeters,
-        maxThiltapesCount,
+        thiltapesCount,
         countdownMinutes,
         createdBy: req.user!.id,
       });
@@ -146,14 +153,29 @@ router.get(
   "/:id/nearby-thiltapes",
   authenticate(),
   async (req: AuthRequest, res: Response) => {
+    console.log(
+      "[nearby-thiltapes] Requisição recebida - gameId:",
+      req.params.id,
+      "playerId:",
+      req.user!.id,
+    );
+
     const { playerLocationLat, playerLocationLng } = req.query;
 
     if (playerLocationLat === undefined || playerLocationLng === undefined) {
+      console.log(
+        "[nearby-thiltapes] Erro: coordenadas do player não informadas",
+      );
       res.status(400).json({
         error: "playerLocationLat e playerLocationLng são obrigatórios.",
       });
       return;
     }
+
+    console.log("[nearby-thiltapes] Localizacao do player:", {
+      lat: playerLocationLat,
+      lng: playerLocationLng,
+    });
 
     try {
       const nearby = await getNearbyThiltapes(
@@ -162,8 +184,10 @@ router.get(
         parseFloat(playerLocationLat as string),
         parseFloat(playerLocationLng as string),
       );
+      console.log("[nearby-thiltapes] Retornando", nearby.length, "thiltapes");
       res.json(nearby);
     } catch (e: any) {
+      console.log("[nearby-thiltapes] Erro:", e.message);
       res.status(400).json({ error: e.message });
     }
   },

@@ -1,5 +1,4 @@
 import { Entity, PrimaryGeneratedColumn, Column, OneToMany } from "typeorm";
-import { Finding } from "./Finding.entity";
 import { GameThiltape } from "./GameThiltape.entity";
 
 @Entity("thiltapes")
@@ -17,9 +16,6 @@ export class Thiltape {
   imageBase64: string | null;
 
   // Relations
-  @OneToMany(() => Finding, (finding) => finding.thiltape, { cascade: true })
-  findings: Finding[];
-
   @OneToMany(() => GameThiltape, (gt) => gt.thiltape, { cascade: true })
   gameThiltapes: GameThiltape[];
 }
